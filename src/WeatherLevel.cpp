@@ -1,6 +1,6 @@
 /*
   WeatherLevel.h - Weather and Level adapter library
-  Copyright (c) 2018 Sentient Things, Inc.  All right reserved.
+  Copyright (c) 2019 Sentient Things, Inc.  All right reserved.
 */
 
 
@@ -14,7 +14,7 @@
 // Constructor /////////////////////////////////////////////////////////////////
 // Function that handles the creation and setup of instances
 
-/*WeatherLevel::WeatherLevel()
+/*Weather::Weather()
 {
   // initialize this instance's variables
 
@@ -25,14 +25,12 @@
 */
 // Public Methods //////////////////////////////////////////////////////////////
 // Functions available in Wiring sketches, this library, and other libraries
-void WeatherLevel::begin(void)
+void Weather::begin(void)
 {
-//  pinMode(AnemometerPin, INPUT_PULLUP);
   AnemoneterPeriodTotal = 0;
   AnemoneterPeriodReadingCount = 0;
   GustPeriod = UINT_MAX;  //  The shortest period (and therefore fastest gust) observed
   lastAnemoneterEvent = 0;
-//  attachInterrupt(AnemometerPin, handleAnemometerEvent, FALLING);
 
   barom.begin();
   barom.setModeBarometer();
@@ -44,11 +42,41 @@ void WeatherLevel::begin(void)
   ds18b20.begin();
   ds18b20.setResolution(11);
   ds18b20.requestTemperatures();
+  
+  if (tsl.begin()) 
+  {
+    Serial.println(F("Found a TSL2591 sensor"));
+  } 
+  else 
+  {
+    Serial.println(F("No sensor found ... check your wiring?"));
+  }
+    
+  /* Display some basic information on this sensor */
+  sensor_t sensor;
+  tsl.getSensor(&sensor);
+  delay(500);
+  
+  /* Configure the sensor */
+  // You can change the gain on the fly, to adapt to brighter/dimmer light situations
+  //tsl.setGain(TSL2591_GAIN_LOW);    // 1x gain (bright light)
+  tsl.setGain(TSL2591_GAIN_MED);      // 25x gain
+  //tsl.setGain(TSL2591_GAIN_HIGH);   // 428x gain
+  
+  // Changing the integration time gives you a longer time over which to sense light
+  // longer timelines are slower, but are good in very low light situtations!
+  //tsl.setTiming(TSL2591_INTEGRATIONTIME_100MS);  // shortest integration time (bright light)
+  // tsl.setTiming(TSL2591_INTEGRATIONTIME_200MS);
+  tsl.setTiming(TSL2591_INTEGRATIONTIME_300MS);
+  // tsl.setTiming(TSL2591_INTEGRATIONTIME_400MS);
+  // tsl.setTiming(TSL2591_INTEGRATIONTIME_500MS);
+  // tsl.setTiming(TSL2591_INTEGRATIONTIME_600MS);  // longest integration time (dim light)
 
-  memset(serial1Buf, NULL, sizeof serial1Buf);
+
+  tsl2591Gain_t gain = tsl.getGain();
 }
 
-float  WeatherLevel::getAndResetAnemometerMPH(float * gustMPH)
+float  Weather::getAndResetAnemometerMPH(float * gustMPH)
 {
     if(AnemoneterPeriodReadingCount == 0)
     {
@@ -66,20 +94,83 @@ float  WeatherLevel::getAndResetAnemometerMPH(float * gustMPH)
     return result;
 }
 
+void Weather::captureBatteryVoltage()
+{
+  unsigned int rawVoltage = 0;
+  Wire.requestFrom(0x4D, 2);
+  if (Wire.available() == 2)
+  {
+    rawVoltage = (Wire.read() << 8) | (Wire.read());
+    batVoltageTotal += (float)(rawVoltage)/4096.0*13.64; // 3.3*(4.7+1.5)/1.5
+    batVoltageCount ++;
+  }  
+}
 
-float WeatherLevel::getAndResetRainInches()
+uint16_t Weather::getAndResetBatteryMV()
+{
+ uint16_t result = (uint16_t) 1000*(batVoltageTotal/batVoltageCount);
+ batVoltageTotal = 0;
+ batVoltageCount = 0;
+ return result;
+}
+
+void Weather::captureLightLux()
+{
+  sensors_event_t event;
+  tsl.getEvent(&event);
+ 
+  /* Display the results (light is measured in lux) */
+  // Serial.print(F("[ ")); Serial.print(event.timestamp); Serial.print(F(" ms ] "));
+  if ((event.light == 0) |
+      (event.light > 4294966000.0) | 
+      (event.light <-4294966000.0))
+  {
+    /* If event.light = 0 lux the sensor is probably saturated */
+    /* and no reliable data could be generated! */
+    /* if event.light is +/- 4294967040 there was a float over/underflow */
+    Serial.println(F("Invalid data (adjust gain or timing)"));
+  }
+  else
+  {
+    lightLuxTotal += (unsigned int)event.light;
+    lightLuxCount ++;
+    // Serial.println(lightLuxTotal);
+    // Serial.println(lightLuxCount);    
+    // Serial.print(event.light); Serial.println(F(" lux"));
+  }
+
+}
+
+uint16_t Weather::getAndResetLightLux()
+{
+  if (lightLuxTotal)
+  {
+    uint16_t result = (uint16_t)(lightLuxTotal/lightLuxCount);
+    lightLuxTotal=0;
+    lightLuxCount=0;
+    return result;
+  }
+  else
+  {
+    lightLuxTotal=0;
+    lightLuxCount=0;
+    return NULL;
+  } 
+}
+
+float Weather::getAndResetRainInches()
 {
     float result = RainScaleInches * float(rainEventCount);
     rainEventCount = 0;
     return result;
 }
 /// Wind Vane
-void WeatherLevel::captureWindVane() {
+void Weather::captureWindVane() {
     // Read the wind vane, and update the running average of the two components of the vector
     unsigned int windVaneRaw = analogRead(WindVanePin);
-//Serial.println(windVaneRaw);
+    //Serial.println(windVaneRaw);
     float windVaneRadians = lookupRadiansFromRaw(windVaneRaw);
-//Serial.println(windVaneRadians);
+    //Serial.println(windVaneRadians);
     if(windVaneRadians > 0 && windVaneRadians < 6.14159)
     {
         windVaneCosTotal += cos(windVaneRadians);
@@ -89,7 +180,7 @@ void WeatherLevel::captureWindVane() {
     return;
 }
 
-float WeatherLevel::getAndResetWindVaneDegrees()
+float Weather::getAndResetWindVaneDegrees()
 {
     if(windVaneReadingCount == 0) {
         return 0;
@@ -108,9 +199,9 @@ float WeatherLevel::getAndResetWindVaneDegrees()
    return result;
 }
 
-float WeatherLevel::lookupRadiansFromRaw(unsigned int analogRaw)
+float Weather::lookupRadiansFromRaw(unsigned int analogRaw)
 {
-//Serial.println(analogRaw);
+    //Serial.println(analogRaw);
     // The mechanism for reading the weathervane isn't arbitrary, but effectively, we just need to look up which of the 16 positions we're in.
     if(analogRaw >= 2200 && analogRaw < 2400) return (3.14);//South
     if(analogRaw >= 2100 && analogRaw < 2200) return (3.53);//SSW
@@ -135,7 +226,7 @@ float WeatherLevel::lookupRadiansFromRaw(unsigned int analogRaw)
 
 /// end Wind vane
 
-void WeatherLevel::captureTempHumidityPressure() {
+void Weather::captureTempHumidityPressure() {
   // Read the humidity and pressure sensors, and update the running average
   // The running (mean) average is maintained by keeping a running sum of the observations,
   // and a count of the number of observations
@@ -189,12 +280,12 @@ if (validTH){
       waterTempFTotal += waterTempF;
       waterTempFReadingCount++;
   }
-delay(2);
-ds18b20.requestTemperatures();
+  delay(2);
+  ds18b20.requestTemperatures();
   return;
 }
 
-void WeatherLevel::captureAirTempHumid() {
+void Weather::captureAirTempHumid() {
   // Read the humidity and pressure sensors, and update the running average
   // The running (mean) average is maintained by keeping a running sum of the observations,
   // and a count of the number of observations
@@ -229,7 +320,7 @@ void WeatherLevel::captureAirTempHumid() {
     }
 }
 
-void WeatherLevel::captureWaterTemp() {
+void Weather::captureWaterTemp() {
   //Measure water temperature from the DS18B20
   float waterTempC = ds18b20.getCRCTempC();
   float waterTempF = (waterTempC * 9.0) / 5.0 + 32.0;
@@ -243,7 +334,7 @@ void WeatherLevel::captureWaterTemp() {
   ds18b20.requestTemperatures();
 }
 
-void WeatherLevel::capturePressure() {
+void Weather::capturePressure() {
   //Measure Pressure from the MPL3115A2
   float pressurePascals = barom.readPressure();
 
@@ -257,7 +348,7 @@ void WeatherLevel::capturePressure() {
   }
 }
 
-float WeatherLevel::getAndResetTempF()
+float Weather::getAndResetTempF()
 {
     if(tempFReadingCount == 0) {
         return 0;
@@ -268,7 +359,7 @@ float WeatherLevel::getAndResetTempF()
     return result;
 }
 
-float WeatherLevel::getAndResetHumidityRH()
+float Weather::getAndResetHumidityRH()
 {
     if(humidityRHReadingCount == 0) {
         return 0;
@@ -280,7 +371,7 @@ float WeatherLevel::getAndResetHumidityRH()
 }
 
 
-float WeatherLevel::getAndResetPressurePascals()
+float Weather::getAndResetPressurePascals()
 {
     if(pressurePascalsReadingCount == 0) {
         return 0;
@@ -291,7 +382,7 @@ float WeatherLevel::getAndResetPressurePascals()
     return result;
 }
 
-float WeatherLevel::getAndResetWaterTempF()
+float Weather::getAndResetWaterTempF()
 {
     if(waterTempFReadingCount == 0) {
         return 0;
@@ -302,7 +393,7 @@ float WeatherLevel::getAndResetWaterTempF()
     return result;
 }
 
-float WeatherLevel::getWaterTempC(void)
+float Weather::getWaterTempC(void)
 {
   float tempC = ds18b20.getCRCTempC();
   ds18b20.requestTemperatures();
@@ -310,7 +401,7 @@ float WeatherLevel::getWaterTempC(void)
 
 }
 
-int16_t WeatherLevel::getWaterTempRAW(void)
+int16_t Weather::getWaterTempRAW(void)
 {
   int16_t tempC = ds18b20.getCRCTempRAW();
   ds18b20.requestTemperatures();
@@ -318,106 +409,20 @@ int16_t WeatherLevel::getWaterTempRAW(void)
 
 }
 
-void WeatherLevel::parseMaxbotixToBuffer()
-{
-    char c = Serial1.read();
-// Serial.print(c);
 
-
-    // Check for start of range reading RxxxCR or RxxxxCR
-    // Can be mm, cm, or inches.
-    if (c == 'R')
-    {
-        readingRange = true;
-        rangeBegin = millis();
-        serial1BufferIndex = 0;
-        memset(serial1Buf, 0x00, 6);
-        return;
-    }
-
-    // True if R has been received ..
-    if (readingRange)
-    {
-        // valid if last R was less than 500ms ago
-        if (millis()-rangeBegin<=500)
-        {
-            // To test valid range digits from 0 to 9
-            uint8_t cnum = c -'0';
-            // True if this is the end of the range message CR
-            if (c=='\r')
-            {
-                // and the number of digits is 3 or 4
-                if (serial1BufferIndex==3 || serial1BufferIndex==4)
-                {
-  // Serial.println(String(serial1Buf));
-                    String range = String(serial1Buf);
-                    int rangeInt = range.toInt();
-                    maxbotixMedian.add((uint16_t) rangeInt);
-                    readingRange = false;
-                    serial1BufferIndex = 0;
-                    memset(serial1Buf, 0x00, 6);
-                    return;
-                }
-                // if not then there is an error
-                else
-                {
-                   readingRange = false;
-                   serial1BufferIndex = 0;
-                   memset(serial1Buf, 0x00, 6);
-                   return;
-                }
-            }
-            // if the received char is 0 to 9 add it to the buffer
-            else if (cnum >= 0 && cnum <=9)
-            {
-                serial1Buf[serial1BufferIndex] = c;
-                serial1BufferIndex++;
-                return;
-            }
-            // if neither then there is an error
-            else
-            {
-                readingRange = false;
-                serial1BufferIndex = 0;
-                memset(serial1Buf, 0x00, 6);
-                return;
-            }
-        }
-        else
-        // readings have timed out so reset
-        {
-            readingRange = false;
-            serial1BufferIndex = 0;
-            memset(serial1Buf, 0x00, 6);
-            return;
-        }
-    }
-    else
-    {
-        return;
-    }
-}
-
-
-uint16_t WeatherLevel::getRangeMedian()
-{
-  uint16_t rangeMedian = maxbotixMedian.getMedian();
-  return rangeMedian;
-}
-
-uint16_t WeatherLevel::getAirTempKMedian()
+uint16_t Weather::getAirTempKMedian()
 {
   uint16_t airKMedian = airTempKMedian.getMedian();
   return airKMedian;
 }
 
-uint16_t WeatherLevel::getRHMedian()
+uint16_t Weather::getRHMedian()
 {
   uint16_t RHMedian = relativeHumidtyMedian.getMedian();
   return RHMedian;
 }
 
-// bool WeatherLevel::getAirTempAndHumidRAW(int16_t &tRAW, uint16_t &hRAW)
+// bool Weather::getAirTempAndHumidRAW(int16_t &tRAW, uint16_t &hRAW)
 // {
 // if(am2315.getTemperatureAndHumidityRAW(tRAW, hRAW))
 //   {
@@ -430,7 +435,7 @@ uint16_t WeatherLevel::getRHMedian()
 // //  am2315.requestTemperatureAndHumidity();
 // }
 
-float WeatherLevel::readPressure()
+float Weather::readPressure()
 {
   return barom.readPressure();
 }
@@ -448,116 +453,13 @@ uint16_t gust_metersph; //meters per hour
 uint16_t rangemm; //Range in millimeters
 uint16_t waterTempKx10; // Temperature in deciKelvin
 */
-void WeatherLevel::getAndResetAllSensors()
-{
-  uint32_t timeRTC = rtc.rtcNow();
-  sensorReadings.unixTime = timeRTC;
-  float gustMPH;
-  float windMPH = getAndResetAnemometerMPH(&gustMPH);
-  sensorReadings.wind_metersph = (uint16_t) ceil(windMPH * 1609.34);
-  float rainInches = getAndResetRainInches();
-  sensorReadings.rainmmx1000 = (uint16_t) ceil(rainInches * 25400);
-  float windDegrees = getAndResetWindVaneDegrees();
-  sensorReadings.windDegrees = (uint16_t) ceil(windDegrees);
-  float airTempF = getAndResetTempF();
-  sensorReadings.airTempKx10 = (uint16_t) ceil((airTempF-32.0)*50.0/9.0 + 2731.5);
-  // sensorReadings.airTempKx10 = airTempKMedian.getMedian();
-  // float humidityRH = getAndResetHumidityRH();
-  uint16_t humidityRH = relativeHumidtyMedian.getMedian();
-  sensorReadings.humid =(uint8_t) ceil(humidityRH);
-  float pressure = getAndResetPressurePascals();
-  sensorReadings.barometerhPa = pressure/10.0;
-  float waterTempF = getAndResetWaterTempF();
-  sensorReadings.waterTempKx10 = (uint16_t) ceil((waterTempF-32.0)*50.0/9.0 + 2731.5);
-  uint16_t range;
-  // Could be in in.=i or cm=c or mm=m depending on the sensor
-  switch (config.maxbotixType)
-  {
-    case 'i':
-      range = (uint16_t)ceil((float)getRangeMedian()*25.4);
-      break;
-    case 'c':
-      range = getRangeMedian()*10;
-      break;
-    case 'm':
-      range = getRangeMedian();
-      break;
-    default:
-      range = getRangeMedian();
-  }
-  sensorReadings.rangemm = range;
-}
 
-// Convert sensorData to CSV String in US units
-String WeatherLevel::sensorReadingsToCsvUS()
-{
-  String csvData =
-//  String(Time.format(sensorReadings.unixTime, TIME_FORMAT_ISO8601_FULL))+
-  String(sensorReadings.unixTime)+
-  ","+
-  String(sensorReadings.windDegrees)+
-  ","+
-  minimiseNumericString(String::format("%.1f",(float)sensorReadings.wind_metersph/1609.34),1)+
-  ","+
-  String(sensorReadings.humid)+
-  ","+
-  minimiseNumericString(String::format("%.1f",(((float)sensorReadings.airTempKx10-2731.5)*9.0/50.0+32.0)),1)+
-  ","+
-  minimiseNumericString(String::format("%.3f",((float)sensorReadings.rainmmx1000/25400)),3)+
-  ","+
-  minimiseNumericString(String::format("%.2f",(float)sensorReadings.barometerhPa/338.6389),2)+
-// Not enough fields in thingspeak channel for gust
-//  ","+
-//  minimiseNumericString(String::format("%.1f",(Float)(sensorReadings.gust_metersph/1609.34)),1)+
-  ","+
-  minimiseNumericString(String::format("%.2f",(((float)sensorReadings.rangeReferencemm-(float)sensorReadings.rangemm)/304.8)),2)+ // 25.4*12=304.8
-  ","+
-  minimiseNumericString(String::format("%.1f",(((float)sensorReadings.waterTempKx10-2731.5)*9/50.0+32.0)),1)+
-  ",,,,"+
-  String(sensorReadings.rangeReferencemm)
-  ;
-//add status field = range reference
-  return csvData;
-}
-
-
-// Convert sensorData to CSV String in US units
-String WeatherLevel::sensorReadingsToCsvUS(sensorReadings_t readings)
-{
-  String csvData =
-//  String(Time.format(readings.unixTime, TIME_FORMAT_ISO8601_FULL))+
-  String(readings.unixTime)+
-  ","+
-  String(readings.windDegrees)+
-  ","+
-  minimiseNumericString(String::format("%.1f",(float)readings.wind_metersph/1609.34),1)+
-  ","+
-  String(readings.humid)+
-  ","+
-  minimiseNumericString(String::format("%.1f",(((float)readings.airTempKx10-2731.5)*9.0/50.0+32.0)),1)+
-  ","+
-  minimiseNumericString(String::format("%.3f",((float)readings.rainmmx1000/25400)),3)+
-  ","+
-  minimiseNumericString(String::format("%.2f",(float)readings.barometerhPa/338.6389),2)+
-// Not enough fields in thingspeak for this
-//  ","+
-//  minimiseNumericString(String::format("%.1f",(Float)(readings.gust_metersph/1609.34)),1)+
-  ","+
-  minimiseNumericString(String::format("%.2f",(((float)readings.rangeReferencemm-readings.rangemm)/304.8)),2)+
-  ","+
-  minimiseNumericString(String::format("%.1f",(((float)readings.waterTempKx10-2731.5)*9.0/50.0+32.0)),1)+
-  ",,,,"+
-  String(readings.rangeReferencemm)
-  ;
-
-  return csvData;
-}
 
 // Private Methods /////////////////////////////////////////////////////////////
 // Functions only available to other functions in this library
 
 //https://stackoverflow.com/questions/277772/avoid-trailing-zeroes-in-printf
-String WeatherLevel::minimiseNumericString(String ss, int n) {
+String Weather::minimiseNumericString(String ss, int n) {
     int str_len = ss.length() + 1;
     char s[str_len];
     ss.toCharArray(s, str_len);
@@ -586,3 +488,726 @@ String WeatherLevel::minimiseNumericString(String ss, int n) {
     }
     return String(s);
 }
+
+/// Maxbotix
+
+// include description files for other libraries used (if any)
+
+
+// Constructor /////////////////////////////////////////////////////////////////
+// Function that handles the creation and setup of instances
+
+Maxbotix::Maxbotix(IoTNode& node, const uint16_t size): 
+            _node(node), _size(size), max1MedianRunning(size), max2MedianRunning(size),
+            framCalib(node.makeFramArray(1, sizeof(calib)))
+{
+  // initialize this instance's variables
+    Serial1.begin(9600);
+    Serial1.blockOnOverrun(false);
+    pinMode(MAX_SEL, OUTPUT);
+    
+    maxSelect = LOW;
+    readingCount = 0;
+    // Select maxbotix 1 on startup by default
+    digitalWrite(MAX_SEL, maxSelect);
+}
+
+int Maxbotix::setup()
+{
+    sensor1On();
+    _node.powerON(EXT3V3);
+    _node.powerON(EXT5V);
+    char target[] = "MB";
+    char *ptr = target;
+    bool findModel = Serial1.find(ptr);
+    if (!findModel) return 0;
+
+    int device1 = Serial1.parseInt();
+    if (!(device1>=1000 && device1<=10000))
+    {
+       return 0; 
+    }
+    else
+    {
+        sensor1ModelNum = device1;
+    }
+    bool knownDevice = false;
+        // Set up sensor1's parameters
+    if (device1 == 7138 || device1 == 7139)
+        {
+        //20,350,6.7,No,cm
+        sensor1Scale = 10;
+        sensor1RangeMin = 20*sensor1Scale;
+        sensor1RangeMax = 350*sensor1Scale;
+        sensor1Timeout = 1000+1000*1/6.7;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+        }
+    else if (device1 == 7052)
+    {
+        //20,765,6.7,No,cm        
+        sensor1Scale = 10;
+        sensor1RangeMin = 20*sensor1Scale;
+        sensor1RangeMax = 765*sensor1Scale;
+        sensor1Timeout = 1000+1000*1/6.7;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7060 || device1 == 7062 || device1 == 7070 || device1 == 7072 || device1 == 7092)
+    {
+        //20,765,10,No,cm
+        sensor1Scale = 10;
+        sensor1RangeMin = 20*sensor1Scale;
+        sensor1RangeMax = 765*sensor1Scale;
+        sensor1Timeout = 1000+1000*1/10;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7066 || device1 == 7076)
+    {
+        //20,1068,10,No,cm
+        sensor1Scale = 10;
+        sensor1RangeMin = 20*sensor1Scale;
+        sensor1RangeMax = 1068*sensor1Scale;
+        sensor1Timeout = 1000+1000*1/10;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7051 || device1 == 7053)
+    {
+        //25,1041,5.1,No,cm
+        sensor1Scale = 10;
+        sensor1RangeMin = 25*sensor1Scale;
+        sensor1RangeMax = 1041*sensor1Scale;
+        sensor1Timeout = 1000+1000*1/5.1;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7560 || device1 == 7569 || device1 == 7580 || device1 == 7589)
+    {
+        //300,5000,0.6,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/0.6;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7369 || device1 == 7789)
+    {
+        //300,5000,6.7,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/6.7;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7360)
+    {
+        //300,5000,7.5,No,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/6.7;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7380)
+    {
+        //300,5000,7.5,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/7.5;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7368)
+    {
+        //300,9999,5.2,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 9999;
+        sensor1Timeout = 1000+1000*1/5.2;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7375 || device1 == 7395)
+    {
+        //500,1525,6.33,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 500;
+        sensor1RangeMax = 1525;
+        sensor1Timeout = 1000+1000*1/6.33;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }  
+    else if (device1 == 7534 || device1 == 7544 || device1 == 7554 || device1 == 7564 || device1 == 7574 || device1 == 7584)
+    {
+        //300,5000,0.6,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 500;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/0.6;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7334 || device1 == 7344 || device1 == 7354 || device1 == 7364 || device1 == 7374 || device1 == 7384)
+    {
+        //300,5000,6,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 500;
+        sensor1RangeMax = 5000;
+        sensor1Timeout = 1000+1000*1/6;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7563 || device1 == 7566 || device1 == 7568 || device1 == 7583 || device1 == 7586 || device1 == 7588)
+    {
+        //300,9999,0.6,Yes,mm
+       sensor1Scale = 1;
+        sensor1RangeMin = 500;
+        sensor1RangeMax = 9999;
+        sensor1Timeout = 1000+1000*1/0.6;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device1 == 7363 || device1 == 7366 || device1 == 7383 || device1 == 7386 || device1 == 7388)
+    {
+        //300,9999,6,Yes,mm
+        sensor1Scale = 1;
+        sensor1RangeMin = 300;
+        sensor1RangeMax = 9999;
+        sensor1Timeout = 1000+1000*1/6;       
+        isSensor1TempComp = false;
+        knownDevice = true;
+        
+    }
+    if (!knownDevice) return 0;
+
+    // Serial.println(deviceModel);
+
+    _node.powerOFF(EXT5V);
+    delay(1000);
+    sensor2On();
+    _node.powerON(EXT5V);
+    Serial1.find(ptr);
+    // Serial.println(Serial1.parseInt());  
+    int device2 = Serial1.parseInt();
+
+    if (!(device2>=1000 && device2<=10000))
+    {
+       sensor2ModelNum = -1;
+       return 1; 
+    }
+    else
+    {
+        sensor2ModelNum = device2;
+    }
+
+    knownDevice = false;
+        // Set up sensor2's parameters
+    if (device2 == 7138 || device2 == 7139)
+        {
+        //20,350,6.7,No,cm
+        sensor2Scale = 10;
+        sensor2RangeMin = 20*sensor2Scale;
+        sensor2RangeMax = 350*sensor2Scale;
+        sensor2Timeout = 1000+1000*1/6.7;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+        }
+    else if (device2 == 7052)
+    {
+        //20,765,6.7,No,cm        
+        sensor2Scale = 10;
+        sensor2RangeMin = 20*sensor2Scale;
+        sensor2RangeMax = 765*sensor2Scale;
+        sensor2Timeout = 1000+1000*1/6.7;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7060 || device2 == 7062 || device2 == 7070 || device2 == 7072 || device2 == 7092)
+    {
+        //20,765,10,No,cm
+        sensor2Scale = 10;
+        sensor2RangeMin = 20*sensor2Scale;
+        sensor2RangeMax = 765*sensor2Scale;
+        sensor2Timeout = 1000+1000*1/10;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7066 || device2 == 7076)
+    {
+        //20,1068,10,No,cm
+        sensor2Scale = 10;
+        sensor2RangeMin = 20*sensor2Scale;
+        sensor2RangeMax = 1068*sensor2Scale;
+        sensor2Timeout = 1000+1000*1/10;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7051 || device2 == 7053)
+    {
+        //25,1041,5.1,No,cm
+        sensor2Scale = 10;
+        sensor2RangeMin = 25*sensor2Scale;
+        sensor2RangeMax = 1041*sensor2Scale;
+        sensor2Timeout = 1000+1000*1/5.1;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7560 || device2 == 7569 || device2 == 7580 || device2 == 7589)
+    {
+        //300,5000,0.6,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/0.6;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7369 || device2 == 7789)
+    {
+        //300,5000,6.7,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/6.7;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7360)
+    {
+        //300,5000,7.5,No,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/6.7;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7380)
+    {
+        //300,5000,7.5,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/7.5;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7368)
+    {
+        //300,9999,5.2,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 9999;
+        sensor2Timeout = 1000+1000*1/5.2;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7375 || device2 == 7395)
+    {
+        //500,1525,6.33,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 500;
+        sensor2RangeMax = 1525;
+        sensor2Timeout = 1000+1000*1/6.33;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }  
+    else if (device2 == 7534 || device2 == 7544 || device2 == 7554 || device2 == 7564 || device2 == 7574 || device2 == 7584)
+    {
+        //300,5000,0.6,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 500;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/0.6;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7334 || device2 == 7344 || device2 == 7354 || device2 == 7364 || device2 == 7374 || device2 == 7384)
+    {
+        //300,5000,6,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 500;
+        sensor2RangeMax = 5000;
+        sensor2Timeout = 1000+1000*1/6;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7563 || device2 == 7566 || device2 == 7568 || device2 == 7583 || device2 == 7586 || device2 == 7588)
+    {
+        //300,9999,0.6,Yes,mm
+       sensor2Scale = 1;
+        sensor2RangeMin = 500;
+        sensor2RangeMax = 9999;
+        sensor2Timeout = 1000+1000*1/0.6;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+    else if (device2 == 7363 || device2 == 7366 || device2 == 7383 || device2 == 7386 || device2 == 7388)
+    {
+        //300,9999,6,Yes,mm
+        sensor2Scale = 1;
+        sensor2RangeMin = 300;
+        sensor2RangeMax = 9999;
+        sensor2Timeout = 1000+1000*1/6;       
+        isSensor2TempComp = false;
+        knownDevice = true;
+        
+    }
+
+    if (!knownDevice)
+    {
+        dualSensor = false;
+        sensor2ModelNum = -1;
+        return 1;
+    }
+    else
+    {
+        dualSensor = true;
+        sensor2ModelNum = device2;
+        return 2;
+    }
+    
+}
+
+
+void Maxbotix::readMaxbotixCharacter()
+{
+    uint32_t millisnow = millis();
+    if (millisnow-rangeBegin>max(sensor1Timeout,sensor2Timeout))
+    {
+        // readings have timed out so reset
+        // Serial.println(millisnow);
+        // Serial.println(rangeBegin);
+        // Serial.println(max(sensor1Timeout,sensor2Timeout));
+        readingRange = false;
+        serial1BufferIndex = 0;
+        memset(serial1Buf, 0x00, sizeof serial1Buf);
+        if (isSensor1On())
+        {
+            sensor1TimeOutCount++;
+        }
+        else
+        {
+            sensor2TimeOutCount++;
+        }
+        
+        if (dualSensor) toggle();
+        emptySerial1Chars();
+        rangeBegin = millis();       
+        return;
+    }
+
+    if (Serial1.available())
+    {
+        char c = Serial1.read();
+        // Serial.print(c);
+
+        // Check for start of range reading RxxxCR or RxxxxCR
+        // Can be mm, cm, or inches.
+        if (c == 'R')
+        {
+            // Serial.println();
+            readingRange = true;
+            // rangeBegin = millis();
+            serial1BufferIndex = 0;
+            memset(serial1Buf, 0x00, sizeof serial1Buf);
+            return;
+        }
+
+        // True if R has been received ..
+        if (readingRange)
+        {
+            // To test valid range digits from 0 to 9
+            uint8_t cnum = c -'0';
+            // True if this is the end of the range message CR
+            if (c=='\r')
+            {
+                // Serial.println();
+                // and the number of digits is 3 or 4
+                if (serial1BufferIndex==3 || serial1BufferIndex==4)
+                {
+                    int rangeInt = atoi(&serial1Buf[0]);
+                    // Serial.println(rangeInt);
+                    if (isSensor1On())
+                    {
+                        // maxReadTime = max(maxReadTime,millis()-rangeBegin);
+                        rangeInt = rangeInt*sensor1Scale;
+                        max1MedianRunning.add((int32_t)rangeInt);
+                    }
+                    else
+                    {
+                        // maxReadTime = max(maxReadTime,millis()-rangeBegin);
+                        rangeInt = rangeInt*sensor2Scale;
+                        max2MedianRunning.add((int32_t)rangeInt);
+                    }
+
+                    // Need to consider timeouts too
+                    readingCount++;
+                    if (readingCount==_size)
+                    {
+                        readingCount=0;
+                        if (isSensor1On())
+                        {
+                            // Serial.print("Sensor 1 median: ");
+                            // Serial.print(range1Median());
+                            // Serial.print(" Max read time: ");
+                            // Serial.println(maxReadTime);
+                            sensor1Available = true;
+                            sensor1TimeOutCount = 0;
+                        }
+                        else
+                        {
+                        //     Serial.print("Sensor 2 median: ");
+                        //     Serial.print(range2Median());
+                        //     Serial.print(" Max read time: ");
+                        //     Serial.println(maxReadTime);
+                            sensor2Available = true;
+                            sensor2TimeOutCount = 0;
+                        }    
+                        maxReadTime=0;
+                        if (dualSensor) toggle();
+                        emptySerial1Chars();
+                    }
+
+                    rangeBegin = millis();
+                    readingRange = false;
+                    serial1BufferIndex = 0;
+                    memset(serial1Buf, 0x00, sizeof serial1Buf);
+                    return;
+                }
+                // if not then there is an error
+                else
+                {
+                    // rangeBegin = millis();
+                    readingRange = false;
+                    serial1BufferIndex = 0;
+                    memset(serial1Buf, 0x00, sizeof serial1Buf);
+                    return;
+                }
+            }
+            // if the received char is 0 to 9 add it to the buffer
+            else if (cnum >= 0 && cnum <=9)
+            {
+                serial1Buf[serial1BufferIndex] = c;
+                serial1BufferIndex++;
+                return;
+            }
+            // if neither then there is an error
+            else
+            {
+                // rangeBegin = millis();
+                readingRange = false;
+                serial1BufferIndex = 0;
+                memset(serial1Buf, 0x00, sizeof serial1Buf);
+                return;                
+            }
+        
+        }
+        else
+        {
+            return;
+        }
+    }
+    else
+    {
+        return;
+    }
+
+}
+
+void Maxbotix::emptySerial1Chars()
+{
+    int numChars = Serial1.available();
+    // Serial.print("Char avail: ");
+    // Serial.println(numChars);
+    // Serial.println();
+    for (int ii=0; ii < numChars; ii++ )
+    {    
+        char c = Serial1.read();
+        // if (c=='\r')
+        // {
+        //     Serial.println();
+        // }
+        // else
+        // {
+        //     Serial.print(c);
+        // }
+        
+        
+    }
+    // while(Serial1.read() >= 0);
+}
+
+int Maxbotix::range1Median()
+{
+    sensor1Available = false;
+    return max1MedianRunning.getMedian();
+}
+
+int Maxbotix::range2Median()
+{
+    sensor2Available = false;
+    return max2MedianRunning.getMedian();
+}
+
+void Maxbotix::toggle()
+{
+    maxSelect = !maxSelect;
+    digitalWrite(MAX_SEL, maxSelect);
+}
+
+void Maxbotix::sensor1On()
+{
+    digitalWrite(MAX_SEL, LOW);
+}
+
+void Maxbotix::sensor2On()
+{
+    digitalWrite(MAX_SEL, HIGH);
+}
+
+
+bool Maxbotix::isSensor1On()
+{
+    if (maxSelect)
+    {
+        return false;
+    }
+    else
+    {
+        return true;
+    }  
+}
+
+bool Maxbotix::isSensor2On()
+{
+    if (maxSelect)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    } 
+}
+
+bool Maxbotix::isSensor1Available()
+{
+    return sensor1Available;
+}
+
+bool Maxbotix::isSensor2Available()
+{
+    return sensor2Available;
+}
+
+void Maxbotix::clearDualSensorCalibration()
+{
+    calib.dualSensorOffset = 0;
+    calib.calibrated = false;
+    framCalib.write(0, (uint8_t*)&calib);
+}
+
+bool Maxbotix::isDualSensorCalibrated()
+{
+    return calib.calibrated;
+}
+
+int Maxbotix::calibrateDualSensorOffSet()
+{    
+    if (!dualSensor) return -1;
+    
+    emptySerial1Chars();
+
+    while (!isSensor2Available()&&sensor2TimeOutCount<4)
+    {
+        readMaxbotixCharacter();
+    }
+
+    if (sensor1TimeOutCount>3)
+    {
+        // Serial.println("Error - sensor 2 timed out.");
+        return -1;        
+    }
+    // Serial.print("Cal range2 is: ");
+    int range2 = range2Median();
+    // Serial.println(range2);  
+    while (!isSensor1Available()&&sensor1TimeOutCount<4)
+    {
+        readMaxbotixCharacter();
+    }
+
+    if (sensor1TimeOutCount>3)
+    {
+        // Serial.println("Error - sensor 1 timed out.");
+        return -1;
+    }
+    // Serial.print("Cal range1 is: ");
+    int range1 = range1Median();
+    // Serial.println(range1);
+
+    // Can add checks for max min and being too close to the max and min
+    // for a valid delta
+    int delta = range1-range2;
+
+    calib.dualSensorOffset = delta;
+
+    calib.calibrated = true;
+
+    framCalib.write(0, (uint8_t*)&calib);
+  
+    return delta;
+}
+
+int Maxbotix::range1Dual()
+{
+    framCalib.read(0, (uint8_t*)&calib);
+    if (abs(range1Median()-(range2Median()+calib.dualSensorOffset))<30)
+    {
+        return range1Median();
+    }
+    else
+    {
+        return -1;
+    }
+    
+}
+
+// Private Methods /////////////////////////////////////////////////////////////
+// Functions only available to other functions in this library
+
+

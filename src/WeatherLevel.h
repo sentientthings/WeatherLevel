@@ -1,101 +1,54 @@
 /*
   WeatherLevel.h - Weather and Level adapter library
-  Copyright (c) 2018 Sentient Things, Inc.  All right reserved.
+  Copyright (c) 2019 Sentient Things, Inc.  All right reserved.
   Based on work by Rob Purser, Mathworks, Inc.
+
+  Version 0.1.0 is not backwards compatible with the previous versions!
+  Changes include:
+  1. The addition of the Maxbotix class that works with one or two Maxbotix sensors
+  2. The removal of ThingSpeak related functions to separate sensor readings from cloud storage
+  See complete diff for details.
 */
+
+
 
 // ensure this library description is only included once
 #ifndef WeatherLevel_h
 #define WeatherLevel_h
 
 // include core Particle library
-#include "application.h"
-
-
+#include "Particle.h"
 
 // include description files for other libraries used (if any)
 #include <OneWire.h>
 #include <DS18B20Minimal.h>
 #include <Adafruit_AM2315.h>
 #include <SparkFun_MPL3115A2.h>
-#include <MCP7941x.h>
-#include <IoTNodeWeatherLevelGlobals.h>
-
-
-// // Globals defined here rather than a separate .h so that there is only one file
-// // to reference in the Particle program api.
-//
-//
-// typedef struct // units chosen for data size and readability
-// {
-//     //Weather
-//     uint32_t unixTime; //system_tick_t (uint32_t)
-//     uint16_t windDegrees; // 1 degree resolution is plenty
-//     uint16_t wind_metersph; //meters per hour
-//     uint8_t humid; //percent
-//     uint16_t airTempKx10; // Temperature in deciKelvin
-//     uint16_t rainmm; // millimeters
-//     float barometerhPa; // Could fit into smaller type if needed
-//     uint16_t gust_metersph; //meters per hour
-//     // Water
-//     int16_t rangemm; //Range in millimeters
-//     uint16_t rangeReferencemm; // Range datum i.e. could be mllw range for tide
-//     uint16_t waterTempKx10; // Temperature in deciKelvin
-//
-// }sensorReadings_t;
-// extern sensorReadings_t sensorReadings;
-//
-// //struct to save created TS channel Id and keys and to check "first run"
-// typedef struct
-// {
-//   int channelId;
-//   int testCheck;
-//   char writeKey[17];
-//   char readKey[17];
-//   char maxbotixType; // i = inches, m = mm, c = cm
-//   char unitType; // U = USA, I = international
-//   int firmwareVersion;
-//   // int maxReadings;//=dataRing size
-//   int particleTimeout;
-//   uint16_t rangeReferencemm;
-//   float latitude;
-//   float longitude;
-// }config_t;
-// extern config_t config;
-//
-// // These variables change as the device logs
-// typedef struct
-// {
-//     // Indices for the FRAM ring buffer.  Saved in FRAM for persistence
-//     // during power cycling and battery loss.
-//     unsigned long ringStart;
-//     unsigned long ringEnd;
-// }status_t;
-// extern status_t status;
-//
-// //End of Globals
-
-#include <RunningMedian16Bit.h>
+#include <RunningMedianST.h>
+#include "IoTNode.h"
+#include <Adafruit_TSL2591.h>
+#include <Adafruit_Sensor.h>
 
 // Updated for Oct 2018 v2 Weather and Level board
-#define ONE_WIRE_BUS N_D4//N_D6//DAC
+#define ONE_WIRE_BUS N_D4
+
+#define MAX_SEL GIOF
 
 // library interface description
-class WeatherLevel
+class Weather
 {
   // user-accessible "public" interface
   public:
-    WeatherLevel() : oneWire(ONE_WIRE_BUS), ds18b20(&oneWire), maxbotixMedian(650), airTempKMedian(30), relativeHumidtyMedian(30), rtc()
-    // WeatherLevel() : maxbotixMedian(650), airTempKMedian(30), relativeHumidtyMedian(30), iotnode()
+    Weather() : oneWire(ONE_WIRE_BUS), ds18b20(&oneWire), airTempKMedian(30), relativeHumidtyMedian(30)
     {
       pinMode(AnemometerPin, INPUT_PULLUP);
-      attachInterrupt(AnemometerPin, &WeatherLevel::handleAnemometerEvent, this, FALLING);
+      attachInterrupt(AnemometerPin, &Weather::handleAnemometerEvent, this, FALLING);
 
       pinMode(RainPin, INPUT_PULLUP);
-      attachInterrupt(RainPin, &WeatherLevel::handleRainEvent, this, FALLING);
+      attachInterrupt(RainPin, &Weather::handleRainEvent, this, FALLING);
     }
     void handleAnemometerEvent() {
-      // Activated by the magnet in the anemometer (2 ticks per rotation), attached to input D3
+      // Activated by the magnet in the anemometer (2 ticks per rotation)
        unsigned int timeAnemometerEvent = millis(); // grab current time
 
       //If there's never been an event before (first time through), then just capture it
@@ -133,7 +86,6 @@ class WeatherLevel
     float getWaterTempC(void);
     int16_t getWaterTempRAW(void);
     void begin(void);
-    // bool getAirTempAndHumidRAW(int16_t &tRAW, uint16_t &hRAW);
     float readPressure();
 
     float getAndResetAnemometerMPH(float * gustMPH);
@@ -144,22 +96,19 @@ class WeatherLevel
     void captureAirTempHumid();
     void captureWaterTemp();
     void capturePressure();
+    void captureLightLux();
+    void captureBatteryVoltage();
 
     float getAndResetWindVaneDegrees();
     float getAndResetTempF();
     float getAndResetHumidityRH();
     float getAndResetPressurePascals();
     float getAndResetWaterTempF();
-    void getAndResetAllSensors();
+    uint16_t getAndResetLightLux();
+    uint16_t getAndResetBatteryMV();
 
-    void parseMaxbotixToBuffer();
-
-    uint16_t getRangeMedian();
     uint16_t getAirTempKMedian();
     uint16_t getRHMedian();
-
-    String sensorReadingsToCsvUS();
-    String sensorReadingsToCsvUS(sensorReadings_t readings);
 
   // library-accessible "private" interface
   private:
@@ -167,26 +116,18 @@ class WeatherLevel
     DS18B20 ds18b20;
     Adafruit_AM2315 am2315;
     MPL3115A2 barom;
-    RunningMedian maxbotixMedian;
-    RunningMedian airTempKMedian;
-    RunningMedian relativeHumidtyMedian;
-    MCP7941x rtc;
-
+    RunningMedianInt32 airTempKMedian;
+    RunningMedianInt32 relativeHumidtyMedian;
+    Adafruit_TSL2591 tsl = Adafruit_TSL2591(2591); // pass in a number for the sensor identifier (for your use later)
     String minimiseNumericString(String ss, int n);
 
 
-    // Put pin mappings to Particle microcontroller here for now as well as
-    // required variables
-    //int RainPin = D5;
-    //int RainPin = N_D3;
     // Updated for Oct 2018 v2 Weather and Level board
     int RainPin = N_D2;
     volatile unsigned int rainEventCount;
     unsigned int lastRainEvent;
     float RainScaleInches = 0.011; // Each pulse is .011 inches of rain
 
-    //const int AnemometerPin = D4;
-    //const int AnemometerPin = N_D2;
     // Updated for Oct 2018 v2 Weather and Level board
     const int AnemometerPin = N_D1;
     float AnemometerScaleMPH = 1.492; // Windspeed if we got a pulse every second (i.e. 1Hz)
@@ -210,15 +151,220 @@ class WeatherLevel
     float waterTempFTotal = 0.0;
     unsigned int waterTempFReadingCount = 0;
 
-    // float lightLux = 0.0;
-    // unsigned int lightLuxCount = 0;
-    ///
     float lookupRadiansFromRaw(unsigned int analogRaw);
+    //Light
+    uint16_t lightLux = 0;
+    unsigned int lightLuxTotal = 0;
+    unsigned int lightLuxCount = 0;
+    //Battery Voltage
+    float batVoltage = 0;
+    float batVoltageTotal = 0;
+    unsigned int batVoltageCount = 0;
+};
 
-    char serial1Buf[6];
+// library interface description
+class Maxbotix
+{
+  // user-accessible "public" interface
+  public:
+    /**
+     * @brief Construct a new Maxbotix object
+     * 
+     * Note that the IoTNode library uses Fram and the library also
+     * keeps track of memory allocation of arrays in the Fram object.
+     * Passing this Fram object through to the library allows the
+     * memory mapping of the arrays to work correctly.
+     * 
+     * @param node typically passed through from the ino
+     * @param size is the number readings for the median
+     */
+    Maxbotix(IoTNode& node, const uint16_t size);
+
+    /**
+     * @brief Run during the main program setup to configure the Fram
+     * 
+     * @return int 
+     */
+    int setup();
+
+    /**
+     * @brief Run in the loop to check for new readings from
+     * the Maxobtix sensors (one or two)
+     * 
+     */
+    void readMaxbotixCharacter();
+
+    /**
+     * @brief The range reading of the Maxbotix sensor
+     * connected to the Range 1 port on the Sentient
+     * Things Weather and Level adapter
+     * 
+     * @return int the range in mm
+     */
+    int range1Median();
+
+    /**
+     * @brief The range reading of the Maxbotix sensor
+     * connected to the Range 2 port on the Sentient
+     * Things Weather and Level adapter
+     * 
+     * @return int the range in mm
+     */
+    int range2Median();
+
+    /**
+     * @brief toggle between sensor 1 and sensor 2
+     * 
+     */
+    void toggle();
+
+    /**
+     * @brief Switch to sensor 1
+     * 
+     */
+    void sensor1On();
+
+    /**
+     * @brief Switch to sensor 2
+     * 
+     */
+    void sensor2On();
+
+    /**
+     * @brief Check if sensor 1 is on
+     * 
+     * @return true 
+     * @return false 
+     */
+    bool isSensor1On();
+
+    /**
+     * @brief Check if sensor 2 is on
+     * 
+     * @return true 
+     * @return false 
+     */
+    bool isSensor2On();
+
+    /**
+     * @brief Check availability of reading
+     * from sensor 1 
+     * 
+     * @return true 
+     * @return false 
+     */
+    bool isSensor1Available();
+
+    /**
+     * @brief Check availability of reading
+     * from sensor 2 
+     * 
+     * @return true 
+     * @return false 
+     */    
+    bool isSensor2Available();
+
+    /**
+     * @brief Run to calibrate the difference
+     * in range reading between sensor 1 and sensor 2.
+     * Run this when the sensors are mounted and pointing at the water
+     * or snow.  The result is saved in Fram.
+     * isDualSensorCalibrated() will return true when done.
+     * 
+     * @return int 
+     */
+    int calibrateDualSensorOffSet();
+    
+    /**
+     * @brief Returns the range from sensor 1
+     * after verifying that the difference range from sensor 2
+     * is calib.dualSensorOffset -+30mm.
+     * This is used to verify good readings during snow storm
+     * events or cases where insects or other object affect
+     * sensor readings.  Requires both sensors to provide
+     * valid readings.
+     * 
+     * @return int The range from sensor 1 in mm
+     */
+    int range1Dual();
+
+    /**
+     * @brief Empties the Serial1 buffer
+     * 
+     */
+    void emptySerial1Chars();
+
+    /**
+     * @brief Clears the dual sensor
+     * calibration from Fram
+     * 
+     */
+    void clearDualSensorCalibration();
+
+    /**
+     * @brief Checks for dual sensor calibration
+     * 
+     * @return true 
+     * @return false 
+     */
+    bool isDualSensorCalibrated();
+
+    /**
+     * @brief Sensor 1 model number
+     * MBXXXX
+     * The value is XXXX
+     * 
+     */
+    int sensor1ModelNum = 0;
+
+    /**
+     * @brief Sensor 2 model number
+     * MBXXXX
+     * The value is XXXX
+     * 
+     */    
+    int sensor2ModelNum = 0;
+    bool dualSensor;
+
+    typedef struct
+    {
+      int dualSensorOffset;
+      bool calibrated;
+    }calib_t;
+
+    calib_t calib;
+
+  // library-accessible "private" interface
+  private:
+    IoTNode _node;
+
+    framArray framCalib;
+
+    int sensor1TimeOutCount = 0;
+    int sensor2TimeOutCount = 0;
+    int value;
     uint8_t serial1BufferIndex = 0;
     bool readingRange = false;
+    char serial1Buf[6];
     uint32_t rangeBegin;
+    bool maxSelect;
+    RunningMedianInt32 max1MedianRunning;
+    RunningMedianInt32 max2MedianRunning;
+    uint32_t _size;
+    uint32_t readingCount;
+    uint32_t sensor1RangeMin;
+    uint32_t sensor1RangeMax;
+    uint32_t sensor1Timeout;
+    uint32_t sensor1Scale;
+    bool isSensor1TempComp;
+    uint32_t sensor2RangeMin;
+    uint32_t sensor2RangeMax;
+    uint32_t sensor2Timeout;
+    uint32_t sensor2Scale;
+    bool isSensor2TempComp;
+    bool sensor1Available=false;
+    bool sensor2Available=false;
+    uint32_t maxReadTime = 0;
 };
 
 #endif
