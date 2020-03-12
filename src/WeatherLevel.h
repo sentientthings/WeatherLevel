@@ -3,6 +3,8 @@
   Copyright (c) 2019 Sentient Things, Inc.  All right reserved.
   Based on work by Rob Purser, Mathworks, Inc.
 
+  Version 0.1.2
+  Bug fixes
   Version 0.1.1
   Changes Include:
   1. Using DS18 library for DS18B20
