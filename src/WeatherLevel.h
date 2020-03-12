@@ -3,6 +3,9 @@
   Copyright (c) 2019 Sentient Things, Inc.  All right reserved.
   Based on work by Rob Purser, Mathworks, Inc.
 
+  Version 0.1.1
+  Changes Include:
+  1. Using DS18 library for DS18B20
   Version 0.1.0 is not backwards compatible with the previous versions!
   Changes include:
   1. The addition of the Maxbotix class that works with one or two Maxbotix sensors
@@ -20,8 +23,7 @@
 #include "Particle.h"
 
 // include description files for other libraries used (if any)
-#include <OneWire.h>
-#include <DS18B20Minimal.h>
+#include "DS18.h"
 #include <Adafruit_AM2315.h>
 #include <SparkFun_MPL3115A2.h>
 #include <RunningMedianST.h>
@@ -39,7 +41,8 @@ class Weather
 {
   // user-accessible "public" interface
   public:
-    Weather() : oneWire(ONE_WIRE_BUS), ds18b20(&oneWire), airTempKMedian(30), relativeHumidtyMedian(30)
+    // Weather() : oneWire(ONE_WIRE_BUS), ds18b20(&oneWire), airTempKMedian(30), relativeHumidtyMedian(30)
+    Weather() : airTempKMedian(30), relativeHumidtyMedian(30)
     {
       pinMode(AnemometerPin, INPUT_PULLUP);
       attachInterrupt(AnemometerPin, &Weather::handleAnemometerEvent, this, FALLING);
@@ -83,8 +86,8 @@ class Weather
       lastRainEvent = timeRainEvent; // set up for next event
     }
 
-    float getWaterTempC(void);
-    int16_t getWaterTempRAW(void);
+    // float getWaterTempC(void);
+    // int16_t getWaterTempRAW(void);
     void begin(void);
     float readPressure();
 
@@ -109,11 +112,15 @@ class Weather
 
     uint16_t getAirTempKMedian();
     uint16_t getRHMedian();
+    
+    String dsType();
+
+    void printDebugInfo();
 
   // library-accessible "private" interface
   private:
-    OneWire oneWire;
-    DS18B20 ds18b20;
+    // OneWire oneWire;
+    // DS18B20 ds18b20;
     Adafruit_AM2315 am2315;
     MPL3115A2 barom;
     RunningMedianInt32 airTempKMedian;
@@ -189,7 +196,7 @@ class Maxbotix
 
     /**
      * @brief Run in the loop to check for new readings from
-     * the Maxobtix sensors (one or two)
+     * the Maxbotix sensors (one or two)
      * 
      */
     void readMaxbotixCharacter();
@@ -337,6 +344,9 @@ class Maxbotix
   // library-accessible "private" interface
   private:
     IoTNode _node;
+    uint32_t _size;
+    RunningMedianInt32 max1MedianRunning;
+    RunningMedianInt32 max2MedianRunning;
 
     framArray framCalib;
 
@@ -348,9 +358,7 @@ class Maxbotix
     char serial1Buf[6];
     uint32_t rangeBegin;
     bool maxSelect;
-    RunningMedianInt32 max1MedianRunning;
-    RunningMedianInt32 max2MedianRunning;
-    uint32_t _size;
+    
     uint32_t readingCount;
     uint32_t sensor1RangeMin;
     uint32_t sensor1RangeMax;

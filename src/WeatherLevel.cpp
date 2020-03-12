@@ -10,6 +10,7 @@
 
 #include <math.h>
 
+DS18 dstemp(ONE_WIRE_BUS);
 
 // Constructor /////////////////////////////////////////////////////////////////
 // Function that handles the creation and setup of instances
@@ -39,18 +40,14 @@ void Weather::begin(void)
 
   am2315.begin();
 
-  ds18b20.begin();
-  ds18b20.setResolution(11);
-  ds18b20.requestTemperatures();
+//   ds18b20.begin();
+//   ds18b20.setResolution(11);
+//   ds18b20.requestTemperatures();
   
   if (tsl.begin()) 
   {
     Serial.println(F("Found a TSL2591 sensor"));
   } 
-  else 
-  {
-    Serial.println(F("No sensor found ... check your wiring?"));
-  }
     
   /* Display some basic information on this sensor */
   sensor_t sensor;
@@ -73,7 +70,7 @@ void Weather::begin(void)
   // tsl.setTiming(TSL2591_INTEGRATIONTIME_600MS);  // longest integration time (dim light)
 
 
-  tsl2591Gain_t gain = tsl.getGain();
+  //tsl2591Gain_t gain = tsl.getGain();
 }
 
 float  Weather::getAndResetAnemometerMPH(float * gustMPH)
@@ -154,7 +151,7 @@ uint16_t Weather::getAndResetLightLux()
   {
     lightLuxTotal=0;
     lightLuxCount=0;
-    return NULL;
+    return 0;
   } 
 }
 
@@ -270,19 +267,6 @@ if (validTH){
       pressurePascalsTotal += pressurePascals;
       pressurePascalsReadingCount++;
   }
-
-  //Measure water temperature from the DS18B20
-  float waterTempC = ds18b20.getCRCTempC();
-  float waterTempF = (waterTempC * 9.0) / 5.0 + 32.0;
-  if(waterTempF > -50 && waterTempF < 150)
-  {
-      // Add the observation to the running sum, and increment the number of observations
-      waterTempFTotal += waterTempF;
-      waterTempFReadingCount++;
-  }
-  delay(2);
-  ds18b20.requestTemperatures();
-  return;
 }
 
 void Weather::captureAirTempHumid() {
@@ -321,17 +305,23 @@ void Weather::captureAirTempHumid() {
 }
 
 void Weather::captureWaterTemp() {
-  //Measure water temperature from the DS18B20
-  float waterTempC = ds18b20.getCRCTempC();
-  float waterTempF = (waterTempC * 9.0) / 5.0 + 32.0;
-  if(waterTempF > -50 && waterTempF < 150)
-  {
-      // Add the observation to the running sum, and increment the number of observations
-      waterTempFTotal += waterTempF;
-      waterTempFReadingCount++;
-  }
-  delay(2);
-  ds18b20.requestTemperatures();
+//  Measure water temperature from the DS18B20
+
+    if (dstemp.read())
+    {
+        float waterTempF = dstemp.fahrenheit();
+        waterTempFTotal += waterTempF;
+        waterTempFReadingCount++;
+        // Serial.println(waterTempF);
+        // printDebugInfo();
+    }
+    else
+    {
+        // Serial.println("Unable to read water temp");
+        // printDebugInfo();
+    }
+    
+
 }
 
 void Weather::capturePressure() {
@@ -393,23 +383,6 @@ float Weather::getAndResetWaterTempF()
     return result;
 }
 
-float Weather::getWaterTempC(void)
-{
-  float tempC = ds18b20.getCRCTempC();
-  ds18b20.requestTemperatures();
-  return tempC;
-
-}
-
-int16_t Weather::getWaterTempRAW(void)
-{
-  int16_t tempC = ds18b20.getCRCTempRAW();
-  ds18b20.requestTemperatures();
-  return tempC;
-
-}
-
-
 uint16_t Weather::getAirTempKMedian()
 {
   uint16_t airKMedian = airTempKMedian.getMedian();
@@ -422,38 +395,61 @@ uint16_t Weather::getRHMedian()
   return RHMedian;
 }
 
-// bool Weather::getAirTempAndHumidRAW(int16_t &tRAW, uint16_t &hRAW)
-// {
-// if(am2315.getTemperatureAndHumidityRAW(tRAW, hRAW))
-//   {
-//     return true;
-//   }
-//   else
-//   {
-//     return false;
-//   }
-// //  am2315.requestTemperatureAndHumidity();
-// }
 
 float Weather::readPressure()
 {
   return barom.readPressure();
 }
-/*
-//Weather
-uint32_t unixTime;
-uint8_t windDegrees; // 1 degree resolution is plenty
-uint16_t wind_metersph; //meters per hour
-uint8_t humid; //percent
-uint16_t airTempKx10; // Temperature in deciKelvin
-uint16_t rainmm; // millimeters
-float barometerkPa; // Could fit into smaller type if needed
-uint16_t gust_metersph; //meters per hour
-// Water
-uint16_t rangemm; //Range in millimeters
-uint16_t waterTempKx10; // Temperature in deciKelvin
-*/
 
+String Weather::dsType()
+{
+      // Print the sensor type
+  const char *type;
+  switch(dstemp.type()) {
+    case WIRE_DS1820: type = "DS1820"; break;
+    case WIRE_DS18B20: type = "DS18B20"; break;
+    case WIRE_DS1822: type = "DS1822"; break;
+    case WIRE_DS2438: type = "DS2438"; break;
+    default: type = "UNKNOWN"; break;
+  }
+  return type;
+}
+
+
+void Weather::printDebugInfo() {
+  // If there's an electrical error on the 1-Wire bus you'll get a CRC error
+  // Just ignore the temperature measurement and try again
+  if (dstemp.crcError()) {
+    Serial.print("CRC Error ");
+  }
+
+  // Print the sensor type
+  const char *type;
+  switch(dstemp.type()) {
+    case WIRE_DS1820: type = "DS1820"; break;
+    case WIRE_DS18B20: type = "DS18B20"; break;
+    case WIRE_DS1822: type = "DS1822"; break;
+    case WIRE_DS2438: type = "DS2438"; break;
+    default: type = "UNKNOWN"; break;
+  }
+  Serial.print(type);
+
+  // Print the ROM (sensor type and unique ID)
+  uint8_t addr[8];
+  dstemp.addr(addr);
+  Serial.printf(
+    " ROM=%02X%02X%02X%02X%02X%02X%02X%02X",
+    addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7]
+  );
+
+  // Print the raw sensor data
+  uint8_t data[9];
+  dstemp.data(data);
+  Serial.printf(
+    " data=%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]
+  );
+}
 
 // Private Methods /////////////////////////////////////////////////////////////
 // Functions only available to other functions in this library
@@ -514,6 +510,10 @@ Maxbotix::Maxbotix(IoTNode& node, const uint16_t size):
 
 int Maxbotix::setup()
 {
+    Serial1.begin(9600);
+    framCalib.read(0, (uint8_t*)&calib);
+    _node.powerOFF(EXT5V);
+    delay(1000);
     sensor1On();
     _node.powerON(EXT3V3);
     _node.powerON(EXT5V);
@@ -599,7 +599,7 @@ int Maxbotix::setup()
         knownDevice = true;
         
     }
-    else if (device1 == 7369 || device1 == 7789)
+    else if (device1 == 7369 || device1 == 7389)
     {
         //300,5000,6.7,Yes,mm
         sensor1Scale = 1;
@@ -707,9 +707,7 @@ int Maxbotix::setup()
     sensor2On();
     _node.powerON(EXT5V);
     Serial1.find(ptr);
-    // Serial.println(Serial1.parseInt());  
     int device2 = Serial1.parseInt();
-
     if (!(device2>=1000 && device2<=10000))
     {
        sensor2ModelNum = -1;
@@ -788,7 +786,7 @@ int Maxbotix::setup()
         knownDevice = true;
         
     }
-    else if (device2 == 7369 || device2 == 7789)
+    else if (device2 == 7369 || device2 == 7389)
     {
         //300,5000,6.7,Yes,mm
         sensor2Scale = 1;
@@ -1057,7 +1055,8 @@ void Maxbotix::emptySerial1Chars()
     // Serial.println();
     for (int ii=0; ii < numChars; ii++ )
     {    
-        char c = Serial1.read();
+        Serial1.read();
+        // char c = Serial1.read();
         // if (c=='\r')
         // {
         //     Serial.println();
