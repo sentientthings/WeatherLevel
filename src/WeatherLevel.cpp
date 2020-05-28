@@ -70,7 +70,7 @@ void Weather::begin(void)
   // tsl.setTiming(TSL2591_INTEGRATIONTIME_600MS);  // longest integration time (dim light)
 
 
-  //tsl2591Gain_t gain = tsl.getGain();
+//   tsl2591Gain_t gain = tsl.getGain();
 }
 
 float  Weather::getAndResetAnemometerMPH(float * gustMPH)
@@ -711,6 +711,8 @@ int Maxbotix::setup()
     if (!(device2>=1000 && device2<=10000))
     {
        sensor2ModelNum = -1;
+       dualSensor = false;
+       sensor1On();
        return 1; 
     }
     else
@@ -889,6 +891,7 @@ int Maxbotix::setup()
     if (!knownDevice)
     {
         dualSensor = false;
+        sensor1On();
         sensor2ModelNum = -1;
         return 1;
     }
@@ -905,7 +908,9 @@ int Maxbotix::setup()
 void Maxbotix::readMaxbotixCharacter()
 {
     uint32_t millisnow = millis();
-    if (millisnow-rangeBegin>max(sensor1Timeout,sensor2Timeout))
+
+    // if (millisnow-rangeBegin>max(sensor1Timeout,sensor2Timeout))
+    if (millisnow-rangeBegin>2000)
     {
         // readings have timed out so reset
         // Serial.println(millisnow);
@@ -917,13 +922,27 @@ void Maxbotix::readMaxbotixCharacter()
         if (isSensor1On())
         {
             sensor1TimeOutCount++;
+            // if (sensor1TimeOutCount>0)
+            // {
+            //     Serial.print("sensor1TimeOutCount=");
+            //     Serial.println(sensor1TimeOutCount);
+            // }
         }
         else
         {
             sensor2TimeOutCount++;
+            // if (sensor2TimeOutCount>0)
+            // {
+            //     Serial.print("sensor2TimeOutCount=");
+            //     Serial.println(sensor2TimeOutCount);
+            // }
         }
         
-        if (dualSensor) toggle();
+        if (dualSensor)
+        {
+            toggle(); 
+        }
+        
         emptySerial1Chars();
         rangeBegin = millis();       
         return;
@@ -962,19 +981,22 @@ void Maxbotix::readMaxbotixCharacter()
                     // Serial.println(rangeInt);
                     if (isSensor1On())
                     {
-                        // maxReadTime = max(maxReadTime,millis()-rangeBegin);
+                        // Serial.printlnf("1: %d",millis());
+                        maxReadTime = max(maxReadTime,millis()-rangeBegin);
                         rangeInt = rangeInt*sensor1Scale;
                         max1MedianRunning.add((int32_t)rangeInt);
                     }
                     else
                     {
-                        // maxReadTime = max(maxReadTime,millis()-rangeBegin);
+                        // Serial.printlnf("2: %d",millis());
+                        maxReadTime = max(maxReadTime,millis()-rangeBegin);
                         rangeInt = rangeInt*sensor2Scale;
                         max2MedianRunning.add((int32_t)rangeInt);
                     }
 
                     // Need to consider timeouts too
                     readingCount++;
+                    // _size is the size of the runnningmedian array
                     if (readingCount==_size)
                     {
                         readingCount=0;
@@ -989,10 +1011,10 @@ void Maxbotix::readMaxbotixCharacter()
                         }
                         else
                         {
-                        //     Serial.print("Sensor 2 median: ");
-                        //     Serial.print(range2Median());
-                        //     Serial.print(" Max read time: ");
-                        //     Serial.println(maxReadTime);
+                            // Serial.print("Sensor 2 median: ");
+                            // Serial.print(range2Median());
+                            // Serial.print(" Max read time: ");
+                            // Serial.println(maxReadTime);
                             sensor2Available = true;
                             sensor2TimeOutCount = 0;
                         }    
@@ -1204,6 +1226,32 @@ int Maxbotix::range1Dual()
         return -1;
     }
     
+}
+
+bool Maxbotix::isValid()
+{
+    if (dualSensor)
+    {
+        if (sensor1TimeOutCount>_size/2 || sensor2TimeOutCount>_size/2)
+        {
+            return false;
+        }
+        else
+        {
+            return true;
+        }        
+    }
+    else
+    {
+        if (sensor1TimeOutCount>_size/2)
+        {
+            return false;
+        }
+        else
+        {
+            return true;
+        }
+    }    
 }
 
 // Private Methods /////////////////////////////////////////////////////////////

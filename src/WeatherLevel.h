@@ -3,6 +3,8 @@
   Copyright (c) 2019 Sentient Things, Inc.  All right reserved.
   Based on work by Rob Purser, Mathworks, Inc.
 
+  Version 0.1.3
+  Fix sensor 1 state and add valid test
   Version 0.1.2
   Bug fixes
   Version 0.1.1
@@ -333,6 +335,9 @@ class Maxbotix
      * 
      */    
     int sensor2ModelNum = 0;
+
+    bool isValid();
+
     bool dualSensor;
 
     typedef struct
@@ -350,6 +355,7 @@ class Maxbotix
     RunningMedianInt32 max1MedianRunning;
     RunningMedianInt32 max2MedianRunning;
 
+
     framArray framCalib;
 
     int sensor1TimeOutCount = 0;
@@ -360,7 +366,7 @@ class Maxbotix
     char serial1Buf[6];
     uint32_t rangeBegin;
     bool maxSelect;
-    
+
     uint32_t readingCount;
     uint32_t sensor1RangeMin;
     uint32_t sensor1RangeMax;
